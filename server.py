@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from datetime import datetime, timezone
 
-from flask import Flask, abort, make_response, redirect, request, send_from_directory
+from flask import Flask, abort, make_response, redirect, render_template, request, send_from_directory
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent
@@ -53,17 +53,8 @@ def valid_grant(token: str) -> tuple[bool, str]:
 
 
 def consume_document_grant(token: str) -> bool:
-    """Allow one top-level page load; keep its assets/API usable until expiry."""
-    valid, nonce = valid_grant(token)
-    if not valid:
-        return False
-    grant_file = DATA_DIR / (".grant-" + Path(nonce).name)
-    try:
-        fd = os.open(grant_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        os.close(fd)
-        return True
-    except FileExistsError:
-        return False
+    """Retained name for callers; grant validation is stateless on Vercel."""
+    return valid_grant(token)[0]
 
 
 def make_grant() -> str:
@@ -78,7 +69,7 @@ def make_grant() -> str:
 
 
 def gate(message: str = ""):
-    response = make_response(send_from_directory(ROOT / "public", "gate.html"))
+    response = make_response(render_template("gate.html"))
     if message:
         response.headers["X-Gate-Message"] = message
     return response
@@ -120,6 +111,8 @@ def submit_nomination():
         return {"error": "Your access has expired. Enter the password again."}, 401
     if not request.is_json:
         return {"error": "Expected a JSON submission."}, 400
+    if os.environ.get("VERCEL"):
+        return {"error": "Nomination storage is not configured for this deployment yet."}, 503
     payload = request.get_json(silent=True) or {}
     fields = {
         "name": str(payload.get("name", "")).strip()[:160],
@@ -155,12 +148,19 @@ def submit_nomination():
 @app.route("/<path:path>")
 def site(path: str):
     token = request.cookies.get("unknown_access", "")
+    valid, nonce = valid_grant(token)
     # A browser refresh is a document navigation. The initial document consumes
     # the grant; its CSS, scripts, images, and form requests remain usable.
     is_document = not path or path == "index.html"
-    authorized = consume_document_grant(token) if is_document else valid_grant(token)[0]
+    seen = request.cookies.get("unknown_seen", "")
+    authorized = valid and (not is_document or seen != nonce)
     if not authorized:
         return gate()
+    if is_document:
+        response = make_response(render_template("index.html"))
+        response.set_cookie("unknown_seen", nonce, httponly=True, secure=request.is_secure,
+                            samesite="Lax", max_age=3600, path="/")
+        return response
     public = ROOT / "public"
     target = (public / path).resolve() if path else public / "index.html"
     if not target.is_relative_to(public.resolve()) or not target.is_file():

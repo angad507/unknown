@@ -12,6 +12,8 @@ The `.env` file is git-ignored. The password is read only by the server and is n
 
 Nomination form submissions are appended to the private, git-ignored `submissions.json` file in the project root. Protect the host and its disk backups as confidential applicant data. The access-request form is not connected to a storage destination yet.
 
-## Deploy on Render
+## Deploy on Vercel
 
-This folder includes a Render Blueprint (`render.yaml`). Create a Blueprint from the project repository, then set `SITE_PASSWORD` as a secret value when prompted. The Blueprint generates `SESSION_SECRET`, runs the app with Gunicorn, and mounts persistent storage at `/var/data` for nomination records. Persistent storage may incur hosting charges; review the plan and current price in Render before launching.
+Import this repository in Vercel and set the project root to this folder. Vercel detects the Flask app in `server.py`; static assets are served from `public/`, while protected pages are rendered from `templates/`. Configure `SITE_PASSWORD` and `SESSION_SECRET` as Vercel environment variables for Production, Preview, and Development as needed. Use a long random value for `SESSION_SECRET`.
+
+Vercel Functions do not provide durable local file storage. The nomination endpoint intentionally returns a clear `503` until a durable database or storage service is configured; it will not claim that a nomination was saved when it was not. The local development server continues to save nominations to `submissions.json`.
