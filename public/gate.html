@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080807">
+  <title>UNKNOWN. — Private Access</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/gate.css">
+</head>
+<body>
+  <main class="gate">
+    <header class="gate__top"><a href="/" class="wordmark">UNKNOWN<span>.</span></a><span class="gate__edition">PRIVATE INDEX&nbsp; / &nbsp;EST. MMXXVI</span></header>
+    <div class="gate__orbit" aria-hidden="true"><span class="orbit orbit--outer"></span><span class="orbit orbit--inner"></span><span class="orbit__point"></span><span class="orbit__label orbit__label--top">INDEX / 001</span><span class="orbit__label orbit__label--bottom">THE RECORD IS INCOMPLETE</span></div>
+    <section class="gate__center" aria-labelledby="gate-title">
+      <span class="eyebrow"><span class="status-dot"></span> RESTRICTED ACCESS</span>
+      <h1 id="gate-title">The known<br>is only the beginning.</h1>
+      <p class="gate__copy">This index is held in confidence.<br>Enter the access phrase to continue.</p>
+      <form action="/unlock" method="post" class="gate__form">
+        <label for="password">ACCESS PHRASE</label>
+        <div class="gate__input"><input id="password" name="password" type="password" autocomplete="current-password" required autofocus><button type="submit" aria-label="Enter the index">↗</button></div>
+        <p class="gate__error" role="alert" hidden></p>
+      </form>
+      <div class="gate__rule"><span>NO PUBLIC ENTRANCE</span><i></i><span>BY CONSIDERATION ONLY</span></div>
+    </section>
+    <footer class="gate__bottom"><span>AN INDEPENDENT INDEX</span><span>INDEPENDENTLY CONSIDERED. NEVER BOUGHT.</span><span>© UNKNOWN. 2026</span></footer>
+  </main>
+  <script>
+    if (new URLSearchParams(location.search).has('denied')) document.querySelector('.gate__error').hidden = false;
+    document.querySelector('form').addEventListener('submit', () => { document.querySelector('button').textContent = '…'; });
+  </script>
+</body>
+</html>
