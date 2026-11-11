@@ -1,0 +1,7 @@
+.env
+submissions.json
+.submissions.json.tmp
+.grant-*
+.venv/
+__pycache__/
+*.py[cod]

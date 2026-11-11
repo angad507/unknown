@@ -20,7 +20,9 @@ if not PASSWORD or not SESSION_SECRET:
 
 app = Flask(__name__, static_folder=None)
 app.secret_key = SESSION_SECRET
-SUBMISSIONS_FILE = ROOT / "submissions.json"
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(ROOT))).resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+SUBMISSIONS_FILE = DATA_DIR / "submissions.json"
 SUBMISSIONS_LOCK = threading.Lock()
 
 
@@ -55,7 +57,7 @@ def consume_document_grant(token: str) -> bool:
     valid, nonce = valid_grant(token)
     if not valid:
         return False
-    grant_file = ROOT / (".grant-" + Path(nonce).name)
+    grant_file = DATA_DIR / (".grant-" + Path(nonce).name)
     try:
         fd = os.open(grant_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(fd)
@@ -69,7 +71,7 @@ def make_grant() -> str:
     import time
 
     nonce = secrets.token_urlsafe(24)
-    expires = str(int(time.time()) + 30)
+    expires = str(int(time.time()) + 3600)
     payload = f"{nonce}.{expires}"
     signature = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return payload + "." + signature
@@ -80,6 +82,11 @@ def gate(message: str = ""):
     if message:
         response.headers["X-Gate-Message"] = message
     return response
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}, 200
 
 
 @app.get("/gate.css")
@@ -95,7 +102,7 @@ def unlock():
     response = redirect("/", code=303)
     # No persistent cookie lifetime: access ends when the browser session ends.
     response.set_cookie("unknown_access", make_grant(), httponly=True, secure=request.is_secure,
-                        samesite="Lax", path="/")
+                        samesite="Lax", max_age=3600, path="/")
     return response
 
 
@@ -162,4 +169,4 @@ def site(path: str):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5000")), debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
