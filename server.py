@@ -6,9 +6,11 @@ import os
 import re
 import secrets
 import threading
+import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 
+from cryptography.fernet import Fernet
 from flask import Flask, abort, make_response, redirect, render_template, request, send_from_directory
 from dotenv import load_dotenv
 
@@ -24,16 +26,9 @@ app.secret_key = SESSION_SECRET
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(ROOT))).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-SUBMISSIONS_FILE = DATA_DIR / "submissions.json"
+SUBMISSIONS_FILE = DATA_DIR / "submissions.txt"
 SUBMISSIONS_LOCK = threading.Lock()
-
-
-def signed_token() -> str:
-    import hashlib
-
-    nonce = secrets.token_urlsafe(24)
-    signature = hmac.new(SESSION_SECRET.encode(), nonce.encode(), hashlib.sha256).hexdigest()
-    return nonce + "." + signature
+MAX_SUBMISSION_BYTES = 16 * 1024
 
 
 def valid_grant(token: str) -> tuple[bool, str]:
@@ -52,11 +47,6 @@ def valid_grant(token: str) -> tuple[bool, str]:
     if not hmac.compare_digest(signature, expected):
         return False, ""
     return True, nonce
-
-
-def consume_document_grant(token: str) -> bool:
-    """Retained name for callers; grant validation is stateless on Vercel."""
-    return valid_grant(token)[0]
 
 
 def make_grant() -> str:
@@ -108,39 +98,27 @@ def leave():
 
 def save_submission(kind: str, fields: dict[str, str]) -> None:
     record = {"type": kind, "received_at": datetime.now(timezone.utc).isoformat(), **fields}
-    database_url = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL")
-    if database_url:
-        import psycopg
-
-        from psycopg.types.json import Json
-
-        with psycopg.connect(database_url, connect_timeout=5, autocommit=True,
-                              options="-c statement_timeout=10000") as connection:
-            connection.execute("""
-                CREATE TABLE IF NOT EXISTS unknown_submissions (
-                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                    type TEXT NOT NULL CHECK (type IN ('nomination', 'access_request')),
-                    received_at TIMESTAMPTZ NOT NULL,
-                    payload JSONB NOT NULL
-                )
-            """)
-            connection.execute(
-                "INSERT INTO unknown_submissions (type, received_at, payload) VALUES (%s, %s, %s)",
-                (kind, record["received_at"], Json(fields)),
-            )
-        return
+    key = os.environ.get("SUBMISSIONS_ENCRYPTION_KEY", "").strip()
+    if not key:
+        raise RuntimeError("Set SUBMISSIONS_ENCRYPTION_KEY before accepting submissions.")
+    ciphertext = Fernet(key.encode("ascii")).encrypt(
+        json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ) + b"\n"
 
     if os.environ.get("VERCEL"):
-        raise RuntimeError("Persistent submission storage is not configured. Add DATABASE_URL in Vercel.")
+        if not (os.environ.get("BLOB_STORE_ID") or os.environ.get("BLOB_READ_WRITE_TOKEN")
+                or os.environ.get("VERCEL_BLOB_READ_WRITE_TOKEN")):
+            raise RuntimeError("Connect a private Vercel Blob store to this project.")
+        from vercel.blob import sync as blob
 
-    with SUBMISSIONS_LOCK:
-        existing = json.loads(SUBMISSIONS_FILE.read_text(encoding="utf-8")) if SUBMISSIONS_FILE.exists() else []
-        if not isinstance(existing, list):
-            raise ValueError("Submission store must contain a JSON array.")
-        existing.append(record)
-        temp_file = SUBMISSIONS_FILE.with_suffix(".json.tmp")
-        temp_file.write_text(json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(temp_file, SUBMISSIONS_FILE)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        pathname = f"unknown-submissions/{kind}/{timestamp}-{uuid.uuid4().hex}.txt"
+        blob.put_blob(pathname, ciphertext, access="private", content_type="text/plain")
+        return
+
+    # Local development uses one private, encrypted append-only text file.
+    with SUBMISSIONS_LOCK, SUBMISSIONS_FILE.open("ab") as file:
+        file.write(ciphertext)
 
 
 def submit_form(kind: str):
@@ -149,6 +127,8 @@ def submit_form(kind: str):
         return {"error": "Your access has expired. Enter the password again."}, 401
     if not request.is_json:
         return {"error": "Expected a JSON submission."}, 400
+    if request.content_length and request.content_length > MAX_SUBMISSION_BYTES:
+        return {"error": "Submission is too large."}, 413
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         return {"error": "Please send a valid form submission."}, 400
@@ -183,7 +163,7 @@ def submit_form(kind: str):
         app.logger.exception("Submission storage is not configured")
         return {"error": "Submissions are temporarily unavailable. Please try again later."}, 503
     except Exception:
-        app.logger.exception("Database error saving %s", kind)
+        app.logger.exception("Storage error saving %s", kind)
         return {"error": "The submission could not be saved. Please try again later."}, 503
     return {"message": message}, 201
 

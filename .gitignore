@@ -1,6 +1,8 @@
 .env
 submissions.json
 .submissions.json.tmp
+submissions.txt
+submissions.txt.tmp
 .grant-*
 .venv/
 __pycache__/
